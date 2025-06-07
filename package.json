@@ -52,8 +52,7 @@
     "client",
     "model-context-protocol"
   ],
-  "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "lint-staged": {
     "*.{ts,js,json,md}": [
       "prettier --write"
