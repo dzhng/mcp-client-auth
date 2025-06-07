@@ -141,8 +141,8 @@ function waitForOAuthCallback(expectedState: string): Promise<string> {
   });
 }
 
-async function testAtlassianMcp() {
-  console.log('🚀 Testing Atlassian MCP server...');
+async function testRemoteMcp() {
+  console.log('🚀 Testing Remote MCP server...');
   console.log(`📡 Server URL: ${REMOTE_MCP_URL}`);
 
   const mcpClient = new McpClient({
@@ -208,7 +208,7 @@ async function testAtlassianMcp() {
       }
     }
   } catch (error: any) {
-    console.error('\n❌ Error testing Atlassian MCP server:');
+    console.error('\n❌ Error testing Remote MCP server:');
     console.error(error.message);
     if (error.stack) {
       console.error('\nStack trace:', error.stack);
@@ -259,4 +259,4 @@ function createMinimalArgs(inputSchema: any): any {
 }
 
 // Run the test
-testAtlassianMcp().catch(console.error);
+testRemoteMcp().catch(console.error);

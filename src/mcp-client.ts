@@ -1,6 +1,6 @@
 /**
  * MCP Client with integrated OAuth2 support
- * 
+ *
  * Automatically handles:
  * - OAuth2 authentication detection
  * - Token management
@@ -11,7 +11,7 @@ import { Client as MCP } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { McpOAuth, McpOAuthOptions } from './mcp-oauth.js';
+import { McpOAuth } from './mcp-oauth';
 
 export interface McpTool {
   name: string;
@@ -95,7 +95,7 @@ export class McpClient {
     if (!this.url.startsWith('https://')) {
       throw new Error('MCP servers must be HTTPS');
     }
-    
+
     const baseUrl = new URL(this.url);
     const client = new MCP({ name: 'mcp-kit-client', version: '1.0.0' });
 
@@ -109,14 +109,16 @@ export class McpClient {
     if (this.requiresAuth && this.oauth) {
       // Ensure OAuth has a valid token
       if (!this.oauth.hasValidToken()) {
-        throw new Error('Authentication required. Please authenticate first using getOAuth()');
+        throw new Error(
+          'Authentication required. Please authenticate first using getOAuth()',
+        );
       }
-      
+
       // Get OAuth token and create auth headers
       const token = await this.oauth.getAccessToken();
       requestInit = {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
       };
     }
@@ -145,7 +147,7 @@ export class McpClient {
 
     // Check if server requires auth
     this.requiresAuth = await this.oauth.checkAuthRequired();
-    
+
     // Initialize OAuth if auth is required
     if (this.requiresAuth) {
       await this.oauth.init();
@@ -157,11 +159,13 @@ export class McpClient {
    */
   private async createTransport(
     baseUrl: URL,
-    requestInit?: RequestInit
+    requestInit?: RequestInit,
   ): Promise<StreamableHTTPClientTransport | SSEClientTransport> {
     try {
       // Try StreamableHTTP transport first
-      const transport = new StreamableHTTPClientTransport(baseUrl, { requestInit });
+      const transport = new StreamableHTTPClientTransport(baseUrl, {
+        requestInit,
+      });
       return transport;
     } catch (err) {
       // Fallback to SSE transport
