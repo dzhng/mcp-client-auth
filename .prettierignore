@@ -5,3 +5,4 @@ coverage
 *.min.js
 *.bundle.js
 package-lock.json
+.claude
