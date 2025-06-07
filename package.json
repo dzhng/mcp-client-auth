@@ -1,0 +1,48 @@
+{
+  "name": "mcp-kit",
+  "version": "1.0.0",
+  "description": "A set of useful utils for building MCP clients, starting with reference OAuth implementations.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./oauth": {
+      "import": "./dist/mcp-oauth.js",
+      "types": "./dist/mcp-oauth.d.ts"
+    },
+    "./client": {
+      "import": "./dist/mcp-client.js",
+      "types": "./dist/mcp-client.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ky": "^1.0.0",
+    "open": "^10.0.0",
+    "openid-client": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "oauth",
+    "client",
+    "model-context-protocol"
+  ],
+  "author": "",
+  "license": "ISC"
+}
