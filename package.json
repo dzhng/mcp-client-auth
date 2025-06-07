@@ -29,7 +29,7 @@
     "format:check": "prettier --check .",
     "prepare": "husky",
     "prepublishOnly": "npm run check-types && npm run format:check && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx test-atlassian.ts"
   },
   "dependencies": {
     "@ianvs/prettier-plugin-sort-imports": "^4.4.2",

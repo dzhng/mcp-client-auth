@@ -36,38 +36,53 @@ import * as client from 'openid-client';
 // --------------------------- Token Store Interface ----------------------------
 
 /**
- * Interface for persisting OAuth tokens between sessions
+ * Interface for persisting OAuth data between sessions
  */
-export interface TokenStore {
-  /** Load stored token from persistent storage */
-  load(): Promise<StoredToken | undefined>;
-  /** Save token to persistent storage */
-  save(token: StoredToken): Promise<void>;
-  /** Optional: Clear stored token */
-  clear?(): Promise<void>;
+export interface OAuthStore {
+  /** Load stored OAuth data from persistent storage */
+  load(): Promise<StoredOAuthData | undefined>;
+  /** Save OAuth data to persistent storage */
+  save(data: StoredOAuthData): Promise<void>;
+  /** Clear stored data */
+  clear(): Promise<void>;
 }
 
 /**
- * OAuth token structure
+ * Stored client registration data
+ */
+export interface StoredClient {
+  client_id: string;
+  client_secret?: string;
+  client_secret_expires_at?: number;
+}
+
+/**
+ * Stored token data
  */
 export interface StoredToken {
-  /** OAuth access token */
   access_token: string;
-  /** OAuth refresh token (if available) */
   refresh_token?: string;
-  /** Token expiration time (Unix timestamp in seconds) */
   expires_at?: number;
-  /** Token type (usually "Bearer") */
   token_type?: string;
 }
 
 /**
- * Simple file-based token storage implementation
+ * Complete OAuth data structure including client registration and tokens
  */
-export class JsonTokenStore implements TokenStore {
-  constructor(private path = '.mcp-token.json') {}
+export interface StoredOAuthData {
+  /** Client registration info */
+  client?: StoredClient;
+  /** Token info */
+  token?: StoredToken;
+}
 
-  async load(): Promise<StoredToken | undefined> {
+/**
+ * Simple file-based OAuth data storage implementation
+ */
+export class JsonOAuthStore implements OAuthStore {
+  constructor(private path = '.mcp-oauth.json') {}
+
+  async load(): Promise<StoredOAuthData | undefined> {
     try {
       return JSON.parse(await fs.readFile(this.path, 'utf8'));
     } catch {
@@ -75,8 +90,8 @@ export class JsonTokenStore implements TokenStore {
     }
   }
 
-  async save(token: StoredToken): Promise<void> {
-    await fs.writeFile(this.path, JSON.stringify(token, null, 2), 'utf8');
+  async save(data: StoredOAuthData): Promise<void> {
+    await fs.writeFile(this.path, JSON.stringify(data, null, 2), 'utf8');
   }
 
   async clear(): Promise<void> {
@@ -98,8 +113,8 @@ export interface McpOAuthOptions {
   clientSecret?: string;
   /** OAuth redirect URI (defaults to http://localhost:3334/callback) */
   redirectUri?: string;
-  /** Token storage implementation (defaults to JsonTokenStore) */
-  store?: TokenStore;
+  /** OAuth data storage implementation (defaults to JsonOAuthStore) */
+  store?: OAuthStore;
   /** Additional Ky options for HTTP requests */
   kyOpts?: KyOptions;
   /** MCP protocol version (defaults to 2024-11-05) */
@@ -140,10 +155,10 @@ const DEFAULT_ENDPOINTS = {
 
 export class McpOAuth {
   private config?: client.Configuration;
-  private token?: StoredToken;
   private kyInstance?: KyInstance;
   private metadata?: ServerMetadata;
   private authBaseUrl: string;
+  private oauthData: StoredOAuthData = {};
 
   constructor(private opts: McpOAuthOptions) {
     // Determine authorization base URL by removing path from server URL
@@ -179,7 +194,7 @@ export class McpOAuth {
   async init(): Promise<void> {
     const {
       redirectUri = 'http://localhost:3334/callback',
-      store = new JsonTokenStore(),
+      store = new JsonOAuthStore(),
       protocolVersion = '2024-11-05',
     } = this.opts;
 
@@ -187,15 +202,26 @@ export class McpOAuth {
     this.opts.redirectUri = redirectUri;
     this.opts.protocolVersion = protocolVersion;
 
-    // 1) Try server metadata discovery
+    // 1) Load any saved OAuth data
+    const savedData = await store.load();
+    if (savedData) {
+      this.oauthData = savedData;
+      // Restore client info if not provided in options
+      if (!this.opts.clientId && savedData.client) {
+        this.opts.clientId = savedData.client.client_id;
+        this.opts.clientSecret = savedData.client.client_secret;
+      }
+    }
+
+    // 2) Try server metadata discovery
     await this.discoverMetadata();
 
-    // 2) Perform dynamic client registration if needed
+    // 3) Perform dynamic client registration if needed
     if (!this.opts.clientId && this.metadata?.registration_endpoint) {
       await this.dynamicClientRegistration();
     }
 
-    // 3) Initialize openid-client configuration
+    // 4) Initialize openid-client configuration
     if (!this.opts.clientId) {
       throw new Error(
         'No client ID available. Server does not support dynamic registration.',
@@ -219,12 +245,6 @@ export class McpOAuth {
         token_endpoint: this.metadata!.token_endpoint,
         registration_endpoint: this.metadata!.registration_endpoint,
       });
-    }
-
-    // 4) Load cached token if any
-    const storedToken = await store.load();
-    if (storedToken) {
-      this.token = storedToken;
     }
   }
 
@@ -286,7 +306,13 @@ export class McpOAuth {
       this.opts.clientId = response.client_id;
       this.opts.clientSecret = response.client_secret;
 
-      // TODO: Persist client registration for future use
+      // Persist client registration for future use
+      this.oauthData.client = {
+        client_id: response.client_id,
+        client_secret: response.client_secret,
+        client_secret_expires_at: response.client_secret_expires_at,
+      };
+      await this.opts.store!.save(this.oauthData);
     } catch (error) {
       console.warn('Dynamic client registration failed:', error);
     }
@@ -356,10 +382,11 @@ export class McpOAuth {
     );
 
     // Convert and store token
-    this.token = this.convertTokenResponse(tokenResponse);
-    await this.opts.store!.save(this.token);
+    const token = this.convertTokenResponse(tokenResponse);
+    this.oauthData.token = token;
+    await this.opts.store!.save(this.oauthData);
 
-    return this.token;
+    return token;
   }
 
   /**
@@ -380,7 +407,10 @@ export class McpOAuth {
           afterResponse: [
             async (_request, _options, response) => {
               // Handle 401 responses by refreshing token
-              if (response.status === 401 && this.token?.refresh_token) {
+              if (
+                response.status === 401 &&
+                this.oauthData.token?.refresh_token
+              ) {
                 await this.refreshAccessToken();
                 // Retry the request with new token
                 throw new Error('Token refreshed, retry request');
@@ -400,20 +430,20 @@ export class McpOAuth {
    * @throws Error if no token available or refresh fails
    */
   async getAccessToken(): Promise<string> {
-    if (!this.token) {
+    if (!this.oauthData.token) {
       throw new Error('No token available. Please authenticate first.');
     }
 
     // Check if token is expired
     if (this.isTokenExpired()) {
-      if (this.token.refresh_token) {
+      if (this.oauthData.token.refresh_token) {
         await this.refreshAccessToken();
       } else {
         throw new Error('Token expired and no refresh token available');
       }
     }
 
-    return this.token.access_token;
+    return this.oauthData.token.access_token;
   }
 
   /**
@@ -421,27 +451,27 @@ export class McpOAuth {
    * @returns true if token exists and is not expired
    */
   hasValidToken(): boolean {
-    return !!this.token && !this.isTokenExpired();
+    return !!this.oauthData.token && !this.isTokenExpired();
   }
 
   /**
    * Check if current token is expired
    */
   private isTokenExpired(): boolean {
-    if (!this.token?.expires_at) {
+    if (!this.oauthData.token?.expires_at) {
       return false;
     }
 
     // Add 5-minute buffer before expiration
     const now = Math.floor(Date.now() / 1000);
-    return now > this.token.expires_at - 300;
+    return now > this.oauthData.token.expires_at - 300;
   }
 
   /**
    * Refresh access token using refresh token
    */
   private async refreshAccessToken(): Promise<void> {
-    if (!this.config || !this.token?.refresh_token) {
+    if (!this.config || !this.oauthData.token?.refresh_token) {
       throw new Error(
         'Cannot refresh token: missing configuration or refresh token',
       );
@@ -449,12 +479,12 @@ export class McpOAuth {
 
     const tokenResponse = await client.refreshTokenGrant(
       this.config,
-      this.token.refresh_token,
+      this.oauthData.token.refresh_token,
     );
 
     // Convert and store token with proper expiration
-    this.token = this.convertTokenResponse(tokenResponse);
-    await this.opts.store!.save(this.token);
+    this.oauthData.token = this.convertTokenResponse(tokenResponse);
+    await this.opts.store!.save(this.oauthData);
   }
 
   /**
@@ -481,10 +511,10 @@ export class McpOAuth {
    * Clear stored tokens from memory and optionally from storage
    * @param clearStorage - Whether to also clear from persistent storage
    */
-  async clearTokens(clearStorage = false): Promise<void> {
-    this.token = undefined;
-    if (clearStorage && this.opts.store?.clear) {
-      await this.opts.store.clear();
+  async reset(clearStorage = false): Promise<void> {
+    this.oauthData = {};
+    if (clearStorage) {
+      await this.opts.store!.clear();
     }
   }
 
@@ -493,12 +523,12 @@ export class McpOAuth {
    * @returns Current token info without sensitive access_token
    */
   getTokenInfo(): { expiresAt?: Date; hasRefreshToken: boolean } | null {
-    if (!this.token) return null;
+    if (!this.oauthData.token) return null;
     return {
-      expiresAt: this.token.expires_at
-        ? new Date(this.token.expires_at * 1000)
+      expiresAt: this.oauthData.token.expires_at
+        ? new Date(this.oauthData.token.expires_at * 1000)
         : undefined,
-      hasRefreshToken: !!this.token.refresh_token,
+      hasRefreshToken: !!this.oauthData.token.refresh_token,
     };
   }
 }
