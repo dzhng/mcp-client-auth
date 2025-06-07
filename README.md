@@ -1,15 +1,30 @@
-# MCP Kit
+# MCP Client Auth
 
 A TypeScript library providing OAuth2 authentication utilities for Model Context Protocol (MCP) clients. This library simplifies the process of adding OAuth authentication to MCP client implementations.
 
+MCP OAuth is extra tricky because the dynamic client registration and metadata discovery steps are not supported by typical oauth implementations. This library simplifies everything to 2 function calls.
+
+If you like this project, please consider starring it and giving me a follow on [X/Twitter](https://x.com/dzhng). This project is sponsored by [Aomni](https://aomni.com).
+
 ## Features
 
-- 🔐 **Complete OAuth2 Flow**: Handles authorization, token exchange, and refresh
+Key capabilities:
+
+- 🔐 **Complete OAuth2 Flow**: Implements the standard OAuth2 authorization code flow with PKCE
 - 🚀 **MCP Client Integration**: Drop-in OAuth support for MCP clients
 - 📦 **Zero Configuration**: Automatic server metadata discovery and dynamic client registration
-- 🔄 **Token Management**: Automatic token refresh and secure storage
+- 🔄 **Token Management**: Automatic token refresh and secure storage (via pluggable storage interface)
 - 🎯 **TypeScript First**: Full type safety and IntelliSense support
-- 🛡️ **PKCE Support**: Implements Proof Key for Code Exchange for enhanced security
+
+### OAuth Authentication Process
+
+The library handles the complete OAuth flow automatically:
+
+1. **Server Discovery** 🔍 → Discovers OAuth endpoints via `/.well-known/oauth-authorization-server`
+2. **Dynamic Registration** 📝 → Registers as a public client if no client ID is provided
+3. **Authorization** 🔐 → Generates authorization URL with PKCE code challenge
+4. **Token Exchange** 🔄 → Exchanges authorization code for access/refresh tokens
+5. **Token Refresh** ♻️ → Automatically refreshes expired tokens when available
 
 ## Installation
 
@@ -28,30 +43,36 @@ const client = new McpClient({
   url: 'https://mcp.example.com',
 });
 
-// Check if authentication is required
-const authStatus = await client.isAuthRequired();
+function connect() {
+  // Check if authentication is required
+  const authStatus = await client.isAuthRequired();
 
-if (authStatus.isRequired && !authStatus.isAuthenticated) {
-  // Get OAuth instance and start auth flow
-  const oauth = await client.getOAuth();
+  if (authStatus.isRequired && !authStatus.isAuthenticated) {
+    console.log('Please visit:', authStatus.authorizationRequest.url);
 
-  // Direct user to authorization URL
-  console.log('Please visit:', authStatus.authorizationRequest.url);
+    // ... REDIRECT USER ...
+  }
+}
 
+function callback() {
   // After user authorizes, exchange code for token
-  const token = await oauth.exchangeCodeForToken(
+  // Realistically - this would be in a different callback route
+  const token = await client.handleAuthByCode(
     code,
-    state,
-    authStatus.authorizationRequest.codeVerifier,
+    authStatus.authorizationRequest,
   );
 }
 
-// Use the client - auth is handled automatically
-const tools = await client.listTools();
-const result = await client.callTool('search', { query: 'example' });
+function use() {
+  // Use the client - auth is handled automatically
+  const tools = await client.listTools();
+  const result = await client.callTool('search', { query: 'example' });
+}
 ```
 
 ### Using OAuth Directly
+
+This is normally not needed - only do this if you have some custom auth logic you want to implement.
 
 ```typescript
 import { McpOAuth } from 'mcp-client-auth';
@@ -200,53 +221,6 @@ const oauth = new McpOAuth({
 });
 ```
 
-## OAuth Flow
-
-This library implements the standard OAuth2 authorization code flow with PKCE:
-
-1. **Server Discovery**: Automatically discovers OAuth endpoints via `/.well-known/oauth-authorization-server`
-2. **Dynamic Registration**: Registers as a public client if no client ID is provided
-3. **Authorization**: Generates authorization URL with PKCE code challenge
-4. **Token Exchange**: Exchanges authorization code for access/refresh tokens
-5. **Token Refresh**: Automatically refreshes expired tokens when available
-
-## Examples
-
-### Complete OAuth Flow Example
-
-```typescript
-import { McpOAuth } from 'mcp-client-auth';
-import open from 'open';
-
-async function authenticate() {
-  const oauth = new McpOAuth({
-    serverUrl: 'https://mcp.example.com',
-  });
-
-  await oauth.init();
-
-  // Generate auth URL
-  const authRequest = await oauth.createAuthorizationRequest();
-
-  // Open browser for user authorization
-  await open(authRequest.url);
-
-  // In a real app, you'd run a local server to handle the callback
-  // For this example, assume we get the code and state from the callback
-  const { code, state } = await waitForCallback();
-
-  // Exchange for tokens
-  const token = await oauth.exchangeCodeForToken(
-    code,
-    state,
-    authRequest.codeVerifier,
-  );
-
-  console.log('Authentication successful!');
-  return oauth;
-}
-```
-
 ## License
 
-ISC
+MIT License - feel free to use and modify as needed.
