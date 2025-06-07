@@ -29,7 +29,7 @@
     "format:check": "prettier --check .",
     "prepare": "husky",
     "prepublishOnly": "npm run check-types && npm run format:check && npm run build",
-    "test": "tsx test-atlassian.ts"
+    "test": "tsx test-remote-mcp.ts"
   },
   "dependencies": {
     "@ianvs/prettier-plugin-sort-imports": "^4.4.2",
