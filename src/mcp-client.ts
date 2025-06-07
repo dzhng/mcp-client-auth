@@ -18,24 +18,27 @@ export interface McpTool {
 }
 
 export interface McpClientOptions {
+  url: string;
   oauth?: McpOAuth; // optional – will be auto-initialised on demand
 }
 
 export class McpClient {
-  private clients = new Map<string, MCP>();
+  private client?: MCP;
   private oauth?: McpOAuth;
+  private url: string;
 
-  constructor(private opts: McpClientOptions = {}) {
+  constructor(opts: McpClientOptions) {
+    this.url = opts.url;
     this.oauth = opts.oauth;
   }
 
   // ------------------------- public high-level helpers ------------------------
-  async getServer(url: string): Promise<MCP> {
-    return this.connect(url);
+  async getServer(): Promise<MCP> {
+    return this.connect();
   }
 
-  async listTools(serverUrl: string): Promise<McpTool[]> {
-    const c = await this.getServer(serverUrl);
+  async listTools(): Promise<McpTool[]> {
+    const c = await this.getServer();
     const resp = await c.listTools();
     return resp.tools.map(t => ({
       name: t.name,
@@ -45,31 +48,25 @@ export class McpClient {
     }));
   }
 
-  async callTool(serverUrl: string, name: string, args: any) {
-    const c = await this.getServer(serverUrl);
+  async callTool(name: string, args: any) {
+    const c = await this.getServer();
     return c.callTool({ name, arguments: args });
   }
 
-  async disconnect(serverUrl: string) {
-    const c = this.clients.get(serverUrl);
-    if (c) {
-      await c.close();
-      this.clients.delete(serverUrl);
+  async disconnect() {
+    if (this.client) {
+      await this.client.close();
+      this.client = undefined;
     }
   }
 
-  async disconnectAll() {
-    const urls = Array.from(this.clients.keys());
-    for (const url of urls) await this.disconnect(url);
-  }
-
   // -------------------------- internal connection logic ----------------------
-  private async connect(serverUrl: string): Promise<MCP> {
-    if (this.clients.has(serverUrl)) return this.clients.get(serverUrl)!;
+  private async connect(): Promise<MCP> {
+    if (this.client) return this.client;
 
-    if (!serverUrl.startsWith('https://'))
+    if (!this.url.startsWith('https://'))
       throw new Error('MCP servers must be HTTPS');
-    const baseUrl = new URL(serverUrl);
+    const baseUrl = new URL(this.url);
 
     // 1) see if server advertises its own OAuth discovery doc
     const authInfo = await this.checkAuth(baseUrl.origin);
@@ -98,7 +95,7 @@ export class McpClient {
       await client.connect(fallback);
     }
 
-    this.clients.set(serverUrl, client);
+    this.client = client;
     return client;
   }
 
@@ -118,6 +115,3 @@ export class McpClient {
     }
   }
 }
-
-// ------------------------- convenience singleton -----------------------------
-export const mcpClient = new McpClient();
