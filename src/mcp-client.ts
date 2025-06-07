@@ -17,7 +17,7 @@ export interface McpTool {
 }
 
 export interface McpClientOptions {
-  oauth?: McpOAuth;           // optional – will be auto-initialised on demand
+  oauth?: McpOAuth; // optional – will be auto-initialised on demand
 }
 
 export class McpClient {
@@ -40,7 +40,7 @@ export class McpClient {
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
-      outputSchema: t.outputSchema
+      outputSchema: t.outputSchema,
     }));
   }
 
@@ -51,18 +51,23 @@ export class McpClient {
 
   async disconnect(serverUrl: string) {
     const c = this.clients.get(serverUrl);
-    if (c) { await c.close(); this.clients.delete(serverUrl); }
+    if (c) {
+      await c.close();
+      this.clients.delete(serverUrl);
+    }
   }
 
   async disconnectAll() {
-    for (const url of this.clients.keys()) await this.disconnect(url);
+    const urls = Array.from(this.clients.keys());
+    for (const url of urls) await this.disconnect(url);
   }
 
   // -------------------------- internal connection logic ----------------------
   private async connect(serverUrl: string): Promise<MCP> {
     if (this.clients.has(serverUrl)) return this.clients.get(serverUrl)!;
 
-    if (!serverUrl.startsWith('https://')) throw new Error('MCP servers must be HTTPS');
+    if (!serverUrl.startsWith('https://'))
+      throw new Error('MCP servers must be HTTPS');
     const baseUrl = new URL(serverUrl);
 
     // 1) see if server advertises its own OAuth discovery doc
@@ -71,7 +76,10 @@ export class McpClient {
 
     if (authInfo.requiresAuth) {
       // ensure we have an OAuth helper
-      if (!this.oauth) { this.oauth = new McpOAuth(); await this.oauth.init(); }
+      if (!this.oauth) {
+        this.oauth = new McpOAuth();
+        await this.oauth.init();
+      }
       token = await this.oauth.getAccessToken();
     }
 
@@ -80,7 +88,7 @@ export class McpClient {
 
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
     const requestInit = headers ? { headers } : undefined;
-    const primary  = new StreamableHTTPClientTransport(baseUrl, { requestInit });
+    const primary = new StreamableHTTPClientTransport(baseUrl, { requestInit });
     try {
       await client.connect(primary);
     } catch (err) {
@@ -95,12 +103,14 @@ export class McpClient {
 
   private async checkAuth(origin: string) {
     try {
-      const res = await ky(`${origin}/.well-known/oauth-authorization-server`, { timeout: 3_000 });
+      const res = await ky(`${origin}/.well-known/oauth-authorization-server`, {
+        timeout: 3_000,
+      });
       if (!res.ok) return { requiresAuth: false };
       const json = await res.json<any>();
       return {
         requiresAuth: true,
-        metadata: json as Record<string, any>
+        metadata: json as Record<string, any>,
       };
     } catch {
       return { requiresAuth: false };

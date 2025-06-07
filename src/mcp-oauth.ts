@@ -21,8 +21,8 @@
 import * as client from 'openid-client';
 import kyFactory, { KyInstance, Options as KyOptions } from 'ky';
 import open from 'open';
-import http from 'node:http';
-import fs from 'node:fs/promises';
+import * as http from 'node:http';
+import * as fs from 'node:fs/promises';
 
 // --------------------------- util: tiny JSON file store -----------------------
 export interface TokenStore {
@@ -33,9 +33,15 @@ export interface TokenStore {
 export class JsonTokenStore implements TokenStore {
   constructor(private path = '.mcp-token.json') {}
   async load() {
-    try { return JSON.parse(await fs.readFile(this.path, 'utf8')); } catch { return undefined; }
+    try {
+      return JSON.parse(await fs.readFile(this.path, 'utf8'));
+    } catch {
+      return undefined;
+    }
   }
-  async save(t: client.TokenEndpointResponse) { await fs.writeFile(this.path, JSON.stringify(t), 'utf8'); }
+  async save(t: client.TokenEndpointResponse) {
+    await fs.writeFile(this.path, JSON.stringify(t), 'utf8');
+  }
 }
 
 // --------------------------- main OAuth helper --------------------------------
@@ -58,15 +64,25 @@ export class McpOAuth {
 
   async init() {
     const {
-      issuerUrl   = 'https://mcp.atlassian.com/.well-known/oauth-authorization-server',
+      issuerUrl = 'https://mcp.atlassian.com/.well-known/oauth-authorization-server',
       redirectUri = 'http://localhost:3334/callback',
-      scopes      = ['read:jira-work', 'write:jira-work', 'read:confluence-content', 'offline_access'],
-      clientId, clientSecret,
-      store       = new JsonTokenStore()
+      scopes = [
+        'read:jira-work',
+        'write:jira-work',
+        'read:confluence-content',
+        'offline_access',
+      ],
+      clientId,
+      clientSecret,
+      store = new JsonTokenStore(),
     } = this.opts;
 
     // 1) discovery
-    this.config = await client.discovery(new URL(issuerUrl), clientId!, clientSecret);
+    this.config = await client.discovery(
+      new URL(issuerUrl),
+      clientId!,
+      clientSecret
+    );
 
     // 2) load cached token if any
     this.token = await store.load();
@@ -81,10 +97,15 @@ export class McpOAuth {
       const base = kyFactory.create({
         ...this.opts.kyOpts,
         hooks: {
-          beforeRequest: [async req => {
-            req.headers.set('Authorization', `Bearer ${await this.getAccessToken()}`);
-          }]
-        }
+          beforeRequest: [
+            async req => {
+              req.headers.set(
+                'Authorization',
+                `Bearer ${await this.getAccessToken()}`
+              );
+            },
+          ],
+        },
       });
       this.kyInstance = base;
     }
@@ -94,7 +115,10 @@ export class McpOAuth {
   async getAccessToken(): Promise<string> {
     if (this.token && this.isTokenExpired(this.token)) {
       if (this.token.refresh_token) {
-        this.token = await client.refreshTokenGrant(this.config, this.token.refresh_token);
+        this.token = await client.refreshTokenGrant(
+          this.config,
+          this.token.refresh_token
+        );
         await this.opts.store!.save(this.token);
       } else {
         await this.interactiveLogin();
@@ -107,14 +131,14 @@ export class McpOAuth {
   private isTokenExpired(token: client.TokenEndpointResponse): boolean {
     if (!token.expires_in) return false;
     // Add a 5-minute buffer before expiration
-    const expirationTime = (token.expires_in * 1000) - (5 * 60 * 1000);
+    const expirationTime = token.expires_in * 1000 - 5 * 60 * 1000;
     return Date.now() > expirationTime;
   }
 
   // --------------------------- interactive browser login ----------------------
   private async interactiveLogin() {
     const { redirectUri, scopes, store } = this.opts;
-    
+
     // Generate PKCE parameters
     const codeVerifier = client.randomPKCECodeVerifier();
     const codeChallenge = await client.calculatePKCECodeChallenge(codeVerifier);
@@ -125,21 +149,25 @@ export class McpOAuth {
       scope: scopes!.join(' '),
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
-      state
+      state,
     };
 
     const authUrl = client.buildAuthorizationUrl(this.config, parameters);
     await open(authUrl.href);
 
     const code = await new Promise<string>((resolve, reject) => {
-      const srv = http.createServer((req, res) => {
-        const u = new URL(req.url!, redirectUri!);
-        if (u.searchParams.get('state') !== state) return reject(new Error('state mismatch'));
-        if (u.searchParams.has('error')) return reject(new Error(u.searchParams.get('error')!));
-        res.end('Authentication complete – you may close this tab.');
-        srv.close();
-        resolve(u.searchParams.get('code')!);
-      }).listen(Number(new URL(redirectUri!).port), 'localhost');
+      const srv = http
+        .createServer((req, res) => {
+          const u = new URL(req.url!, redirectUri!);
+          if (u.searchParams.get('state') !== state)
+            return reject(new Error('state mismatch'));
+          if (u.searchParams.has('error'))
+            return reject(new Error(u.searchParams.get('error')!));
+          res.end('Authentication complete – you may close this tab.');
+          srv.close();
+          resolve(u.searchParams.get('code')!);
+        })
+        .listen(Number(new URL(redirectUri!).port), 'localhost');
     });
 
     // Exchange authorization code for tokens
@@ -149,9 +177,9 @@ export class McpOAuth {
 
     this.token = await client.authorizationCodeGrant(this.config, callbackUrl, {
       pkceCodeVerifier: codeVerifier,
-      expectedState: state
+      expectedState: state,
     });
-    
+
     await store!.save(this.token);
   }
 }
