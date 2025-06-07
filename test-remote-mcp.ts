@@ -158,7 +158,7 @@ async function testRemoteMcp() {
     // Test connection
     console.log('\n📋 Connecting to server...');
     // Usually this doesn't need to be called (mcpClient will automatically call it), but it's here just so we can log that it successfully connected
-    await mcpClient.getServer();
+    await mcpClient.getClient();
     console.log('✅ Successfully connected to server');
 
     // List available tools

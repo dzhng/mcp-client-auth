@@ -50,12 +50,12 @@ export class McpClient {
   }
 
   // ------------------------- public high-level helpers ------------------------
-  async getServer(): Promise<MCP> {
+  async getClient(): Promise<MCP> {
     return this.connect();
   }
 
   async listTools(): Promise<McpTool[]> {
-    const c = await this.getServer();
+    const c = await this.getClient();
     const resp = await c.listTools();
     return resp.tools.map(t => ({
       name: t.name,
@@ -66,7 +66,7 @@ export class McpClient {
   }
 
   async callTool(name: string, args: any) {
-    const c = await this.getServer();
+    const c = await this.getClient();
     return c.callTool({ name, arguments: args });
   }
 
