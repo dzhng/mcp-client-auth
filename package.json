@@ -32,6 +32,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@ianvs/prettier-plugin-sort-imports": "^4.4.2",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ky": "^1.0.0",
     "open": "^10.0.0",

@@ -18,11 +18,11 @@
  * ```
  */
 
-import * as client from 'openid-client';
+import * as fs from 'node:fs/promises';
+import * as http from 'node:http';
 import kyFactory, { KyInstance, Options as KyOptions } from 'ky';
 import open from 'open';
-import * as http from 'node:http';
-import * as fs from 'node:fs/promises';
+import * as client from 'openid-client';
 
 // --------------------------- util: tiny JSON file store -----------------------
 export interface TokenStore {
@@ -81,7 +81,7 @@ export class McpOAuth {
     this.config = await client.discovery(
       new URL(issuerUrl),
       clientId!,
-      clientSecret
+      clientSecret,
     );
 
     // 2) load cached token if any
@@ -101,7 +101,7 @@ export class McpOAuth {
             async req => {
               req.headers.set(
                 'Authorization',
-                `Bearer ${await this.getAccessToken()}`
+                `Bearer ${await this.getAccessToken()}`,
               );
             },
           ],
@@ -117,7 +117,7 @@ export class McpOAuth {
       if (this.token.refresh_token) {
         this.token = await client.refreshTokenGrant(
           this.config,
-          this.token.refresh_token
+          this.token.refresh_token,
         );
         await this.opts.store!.save(this.token);
       } else {
