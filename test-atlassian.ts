@@ -1,21 +1,158 @@
 #!/usr/bin/env node
 
 /**
- * Test script for Atlassian's MCP server
+ * Test script for Atlassian's MCP server with OAuth support
  * Usage: npx tsx test-atlassian.ts
  */
+import * as http from 'node:http';
+import open from 'open';
 import { McpClient } from './src/mcp-client.js';
 
 const ATLASSIAN_MCP_URL = 'https://mcp.atlassian.com/v1/sse';
 
-const mcpClient = new McpClient({ url: ATLASSIAN_MCP_URL });
+/**
+ * Handle OAuth authentication flow
+ */
+async function handleOAuthFlow(mcpClient: McpClient): Promise<void> {
+  const oauth = await mcpClient.getOAuth();
+  if (!oauth) {
+    console.log('✅ No authentication required');
+    return;
+  }
+
+  console.log('🔐 Authentication required. Starting OAuth flow...');
+  
+  // Check if we already have a valid token
+  if (oauth.hasValidToken()) {
+    console.log('✅ Using existing valid token');
+    return;
+  }
+
+  // Create authorization request
+  const authRequest = await oauth.createAuthorizationRequest();
+  console.log(`🌐 Opening browser for authentication...`);
+  console.log(`   If browser doesn't open, visit: ${authRequest.url}`);
+  
+  // Open browser
+  await open(authRequest.url);
+  
+  // Start local server to receive callback
+  const code = await waitForOAuthCallback(authRequest.state);
+  
+  // Exchange code for token
+  console.log('🔄 Exchanging authorization code for token...');
+  await oauth.exchangeCodeForToken(code, authRequest.state, authRequest.codeVerifier);
+  console.log('✅ Authentication successful!');
+}
+
+/**
+ * Wait for OAuth callback on local server
+ */
+function waitForOAuthCallback(expectedState: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url!, 'http://localhost:3334');
+      
+      // Validate state parameter
+      const state = url.searchParams.get('state');
+      if (state !== expectedState) {
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body>
+              <h1>Authentication Error</h1>
+              <p>Invalid state parameter. Please try again.</p>
+            </body>
+          </html>
+        `);
+        server.close();
+        reject(new Error('OAuth state mismatch'));
+        return;
+      }
+      
+      // Check for OAuth error
+      const error = url.searchParams.get('error');
+      if (error) {
+        const errorDesc = url.searchParams.get('error_description') || error;
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body>
+              <h1>Authentication Error</h1>
+              <p>${errorDesc}</p>
+            </body>
+          </html>
+        `);
+        server.close();
+        reject(new Error(`OAuth error: ${errorDesc}`));
+        return;
+      }
+      
+      // Get authorization code
+      const code = url.searchParams.get('code');
+      if (!code) {
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body>
+              <h1>Authentication Error</h1>
+              <p>Missing authorization code.</p>
+            </body>
+          </html>
+        `);
+        server.close();
+        reject(new Error('Missing authorization code'));
+        return;
+      }
+      
+      // Success response
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`
+        <html>
+          <body>
+            <h1>Authentication Successful!</h1>
+            <p>You can close this window and return to your terminal.</p>
+            <script>window.close();</script>
+          </body>
+        </html>
+      `);
+      
+      server.close();
+      resolve(code);
+    });
+    
+    server.listen(3334, 'localhost', () => {
+      console.log('📡 Listening for OAuth callback on http://localhost:3334');
+    });
+    
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      server.close();
+      reject(new Error('OAuth callback timeout'));
+    }, 5 * 60 * 1000);
+  });
+}
 
 async function testAtlassianMcp() {
   console.log('🚀 Testing Atlassian MCP server...');
-  console.log(`📡 Connecting to: ${ATLASSIAN_MCP_URL}`);
+  console.log(`📡 Server URL: ${ATLASSIAN_MCP_URL}`);
+
+  const mcpClient = new McpClient({ 
+    url: ATLASSIAN_MCP_URL,
+    // You can provide pre-registered client credentials here if you have them
+    // clientId: 'your-client-id',
+    // clientSecret: 'your-client-secret',
+  });
 
   try {
+    // Check if authentication is required
+    const authRequired = await mcpClient.isAuthRequired();
+    if (authRequired) {
+      await handleOAuthFlow(mcpClient);
+    }
+
     // Test connection
+    console.log('\n📋 Connecting to server...');
     const server = await mcpClient.getServer();
     console.log('✅ Successfully connected to server');
 
@@ -28,45 +165,40 @@ async function testAtlassianMcp() {
     } else {
       console.log(`✅ Found ${tools.length} tool(s):`);
       tools.forEach((tool, index) => {
-        console.log(`  ${index + 1}. ${tool.name}`);
+        console.log(`\n  ${index + 1}. ${tool.name}`);
         if (tool.description) {
           console.log(`     Description: ${tool.description}`);
         }
-        console.log(
-          `     Input Schema: ${JSON.stringify(tool.inputSchema, null, 2)}`,
-        );
+        console.log(`     Input Schema:`, JSON.stringify(tool.inputSchema, null, 2));
         if (tool.outputSchema) {
-          console.log(
-            `     Output Schema: ${JSON.stringify(tool.outputSchema, null, 2)}`,
-          );
+          console.log(`     Output Schema:`, JSON.stringify(tool.outputSchema, null, 2));
         }
-        console.log();
       });
     }
 
     // Test a simple tool call if tools are available
     if (tools.length > 0) {
       const firstTool = tools[0];
-      console.log(`🔧 Testing tool call: ${firstTool.name}`);
+      console.log(`\n🔧 Testing tool call: ${firstTool.name}`);
 
       // Create minimal arguments based on input schema
       const args = createMinimalArgs(firstTool.inputSchema);
+      console.log('   Arguments:', JSON.stringify(args, null, 2));
 
       try {
         const result = await mcpClient.callTool(firstTool.name, args);
         console.log('✅ Tool call successful:');
         console.log(JSON.stringify(result, null, 2));
-      } catch (error) {
-        console.log(
-          '⚠️  Tool call failed (this may be expected if auth is required):',
-        );
-        console.log(error.message);
+      } catch (error: any) {
+        console.log('⚠️  Tool call failed:', error.message);
       }
     }
-  } catch (error) {
-    console.error('❌ Error testing Atlassian MCP server:');
+  } catch (error: any) {
+    console.error('\n❌ Error testing Atlassian MCP server:');
     console.error(error.message);
-    console.error('\nFull error:', error);
+    if (error.stack) {
+      console.error('\nStack trace:', error.stack);
+    }
   } finally {
     // Clean up connection
     await mcpClient.disconnect();

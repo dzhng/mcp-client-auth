@@ -2,16 +2,14 @@
  * MCP Client with integrated OAuth2 support
  * 
  * Automatically handles:
- * - OAuth2 server metadata discovery
- * - Dynamic client registration
- * - Token management and refresh
+ * - OAuth2 authentication detection
+ * - Token management
  * - Transport selection (StreamableHTTP with SSE fallback)
  */
 
 import { Client as MCP } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import ky, { HTTPError } from 'ky';
 
 import { McpOAuth, McpOAuthOptions } from './mcp-oauth.js';
 
@@ -24,27 +22,22 @@ export interface McpTool {
 
 export interface McpClientOptions {
   url: string;
+  oauth?: McpOAuth; // Optional pre-configured OAuth instance
   clientId?: string; // Optional pre-registered OAuth client ID
   clientSecret?: string; // Optional OAuth client secret
-  oauthRedirectUri?: string; // OAuth redirect URI (default: http://localhost:3334/callback)
-  protocolVersion?: string; // MCP protocol version (default: 2024-11-05)
+  oauthRedirectUri?: string; // OAuth redirect URI
+  protocolVersion?: string; // MCP protocol version
 }
 
 export class McpClient {
   private client?: MCP;
   private oauth?: McpOAuth;
   private url: string;
-  private oauthOptions: Partial<McpOAuthOptions>;
   private requiresAuth?: boolean;
 
-  constructor(opts: McpClientOptions) {
+  constructor(private opts: McpClientOptions) {
     this.url = opts.url;
-    this.oauthOptions = {
-      clientId: opts.clientId,
-      clientSecret: opts.clientSecret,
-      redirectUri: opts.oauthRedirectUri,
-      protocolVersion: opts.protocolVersion,
-    };
+    this.oauth = opts.oauth;
   }
 
   // ------------------------- public high-level helpers ------------------------
@@ -75,6 +68,26 @@ export class McpClient {
     }
   }
 
+  /**
+   * Get OAuth instance if authentication is required
+   */
+  async getOAuth(): Promise<McpOAuth | undefined> {
+    if (this.requiresAuth === undefined) {
+      await this.checkAuthRequired();
+    }
+    return this.requiresAuth ? this.oauth : undefined;
+  }
+
+  /**
+   * Check if authentication is required
+   */
+  async isAuthRequired(): Promise<boolean> {
+    if (this.requiresAuth === undefined) {
+      await this.checkAuthRequired();
+    }
+    return this.requiresAuth || false;
+  }
+
   // -------------------------- internal connection logic ----------------------
   private async connect(): Promise<MCP> {
     if (this.client) return this.client;
@@ -86,7 +99,7 @@ export class McpClient {
     const baseUrl = new URL(this.url);
     const client = new MCP({ name: 'mcp-kit-client', version: '1.0.0' });
 
-    // Try initial connection to check if auth is required
+    // Check if auth is required and initialize OAuth if needed
     if (this.requiresAuth === undefined) {
       await this.checkAuthRequired();
     }
@@ -94,6 +107,11 @@ export class McpClient {
     // Create transport with appropriate auth headers
     let requestInit: RequestInit | undefined;
     if (this.requiresAuth && this.oauth) {
+      // Ensure OAuth has a valid token
+      if (!this.oauth.hasValidToken()) {
+        throw new Error('Authentication required. Please authenticate first using getOAuth()');
+      }
+      
       // Get OAuth token and create auth headers
       const token = await this.oauth.getAccessToken();
       requestInit = {
@@ -114,36 +132,22 @@ export class McpClient {
    * Check if the server requires authentication
    */
   private async checkAuthRequired(): Promise<void> {
-    try {
-      // Try to access the server without auth
-      const response = await ky.get(this.url, {
-        timeout: 5000,
-        throwHttpErrors: false,
-      });
-      
-      if (response.status === 401) {
-        // Server requires authentication
-        this.requiresAuth = true;
-        await this.initializeOAuth();
-      } else {
-        // Server doesn't require auth or returned another status
-        this.requiresAuth = false;
-      }
-    } catch (error) {
-      // Network error or timeout - assume no auth required
-      this.requiresAuth = false;
-    }
-  }
-
-  /**
-   * Initialize OAuth client
-   */
-  private async initializeOAuth(): Promise<void> {
+    // Initialize OAuth instance if not provided
     if (!this.oauth) {
       this.oauth = new McpOAuth({
         serverUrl: this.url,
-        ...this.oauthOptions,
+        clientId: this.opts.clientId,
+        clientSecret: this.opts.clientSecret,
+        redirectUri: this.opts.oauthRedirectUri,
+        protocolVersion: this.opts.protocolVersion,
       });
+    }
+
+    // Check if server requires auth
+    this.requiresAuth = await this.oauth.checkAuthRequired();
+    
+    // Initialize OAuth if auth is required
+    if (this.requiresAuth) {
       await this.oauth.init();
     }
   }
@@ -165,5 +169,4 @@ export class McpClient {
       return new SSEClientTransport(baseUrl, { requestInit });
     }
   }
-
 }

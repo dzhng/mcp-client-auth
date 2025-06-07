@@ -1,16 +1,16 @@
 /**
- * OAuth2 implementation for MCP (Model Context Protocol) servers
- * Complies with MCP Authorization specification including:
+ * OAuth2 library for MCP (Model Context Protocol) servers
+ * 
+ * Provides OAuth2 functionality without handling UI concerns:
  * - Server metadata discovery (RFC8414)
  * - Dynamic client registration (RFC7591)
- * - OAuth 2.1 with PKCE
- * - Proper token handling and refresh
+ * - Authorization URL generation with PKCE
+ * - Token exchange and refresh
+ * - Bearer token management
  */
 
 import * as fs from 'node:fs/promises';
-import * as http from 'node:http';
 import kyFactory, { KyInstance, Options as KyOptions } from 'ky';
-import open from 'open';
 import * as client from 'openid-client';
 
 // --------------------------- Token Store Interface ----------------------------
@@ -19,7 +19,7 @@ export interface TokenStore {
   save(token: StoredToken): Promise<void>;
 }
 
-interface StoredToken {
+export interface StoredToken {
   access_token: string;
   refresh_token?: string;
   expires_at?: number; // Unix timestamp in seconds
@@ -53,7 +53,7 @@ export interface McpOAuthOptions {
   protocolVersion?: string; // MCP protocol version
 }
 
-interface ServerMetadata {
+export interface ServerMetadata {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
@@ -63,10 +63,16 @@ interface ServerMetadata {
   code_challenge_methods_supported?: string[];
 }
 
-interface ClientRegistrationResponse {
+export interface ClientRegistrationResponse {
   client_id: string;
   client_secret?: string;
   client_secret_expires_at?: number;
+}
+
+export interface AuthorizationRequest {
+  url: string;
+  state: string;
+  codeVerifier: string;
 }
 
 // Default endpoint paths per MCP spec
@@ -89,6 +95,29 @@ export class McpOAuth {
     this.authBaseUrl = `${url.protocol}//${url.host}`;
   }
   
+  /**
+   * Check if the MCP server requires authentication
+   */
+  async checkAuthRequired(): Promise<boolean> {
+    try {
+      const response = await kyFactory.get(this.opts.serverUrl, {
+        timeout: 5000,
+        throwHttpErrors: false,
+        headers: {
+          'MCP-Protocol-Version': this.opts.protocolVersion || '2024-11-05',
+        },
+      });
+      
+      return response.status === 401;
+    } catch (error) {
+      // Network error or timeout - assume no auth required
+      return false;
+    }
+  }
+  
+  /**
+   * Initialize OAuth client
+   */
   async init(): Promise<void> {
     const {
       redirectUri = 'http://localhost:3334/callback',
@@ -115,33 +144,23 @@ export class McpOAuth {
       );
     }
     
-    // Use custom discovery with our metadata if available
+    // Initialize with discovered or default metadata
+    const issuerUrl = this.metadata?.issuer || this.authBaseUrl;
+    this.config = await client.discovery(
+      new URL(issuerUrl),
+      this.opts.clientId,
+      this.opts.clientSecret
+    );
+    
+    // Override endpoints if we have custom metadata
     if (this.metadata) {
-      // Create a custom issuer with our metadata
-      const issuer = new URL(this.metadata.issuer || this.authBaseUrl);
-      
-      // Create configuration directly from our metadata
-      this.config = {
-        serverMetadata: () => ({
-          issuer: this.metadata!.issuer,
-          authorization_endpoint: this.metadata!.authorization_endpoint,
-          token_endpoint: this.metadata!.token_endpoint,
-          registration_endpoint: this.metadata!.registration_endpoint,
-        }),
-        clientId: this.opts.clientId!,
-        clientSecret: this.opts.clientSecret,
-        clientMetadata: () => ({
-          client_id: this.opts.clientId!,
-          client_secret: this.opts.clientSecret,
-        }),
-      } as client.Configuration;
-    } else {
-      // Fallback to standard discovery
-      this.config = await client.discovery(
-        new URL(this.authBaseUrl),
-        this.opts.clientId!,
-        this.opts.clientSecret
-      );
+      // @ts-ignore - accessing private properties for customization
+      this.config.serverMetadata = () => ({
+        issuer: this.metadata!.issuer,
+        authorization_endpoint: this.metadata!.authorization_endpoint,
+        token_endpoint: this.metadata!.token_endpoint,
+        registration_endpoint: this.metadata!.registration_endpoint,
+      });
     }
     
     // 4) Load cached token if any
@@ -162,6 +181,7 @@ export class McpOAuth {
         headers: {
           'MCP-Protocol-Version': this.opts.protocolVersion!,
         },
+        timeout: 5000,
       }).json<ServerMetadata>();
       
       this.metadata = response;
@@ -176,7 +196,6 @@ export class McpOAuth {
       };
     }
   }
-  
   
   /**
    * Perform dynamic client registration per RFC7591
@@ -216,6 +235,72 @@ export class McpOAuth {
   }
   
   /**
+   * Generate authorization URL with PKCE
+   * Returns the URL and state/verifier for later use
+   */
+  async createAuthorizationRequest(): Promise<AuthorizationRequest> {
+    if (!this.config) {
+      throw new Error('OAuth not initialized');
+    }
+    
+    // Generate PKCE parameters
+    const codeVerifier = client.randomPKCECodeVerifier();
+    const codeChallenge = await client.calculatePKCECodeChallenge(codeVerifier);
+    const state = client.randomState();
+    
+    const authParams: Record<string, string> = {
+      redirect_uri: this.opts.redirectUri!,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      state,
+      response_type: 'code',
+    };
+    
+    // Build authorization URL
+    const authUrl = client.buildAuthorizationUrl(this.config, authParams);
+    
+    return {
+      url: authUrl.href,
+      state,
+      codeVerifier,
+    };
+  }
+  
+  /**
+   * Exchange authorization code for tokens
+   */
+  async exchangeCodeForToken(
+    code: string,
+    state: string,
+    codeVerifier: string
+  ): Promise<StoredToken> {
+    if (!this.config) {
+      throw new Error('OAuth not initialized');
+    }
+    
+    // Create callback URL with code and state
+    const callbackUrl = new URL(this.opts.redirectUri!);
+    callbackUrl.searchParams.set('code', code);
+    callbackUrl.searchParams.set('state', state);
+    
+    // Exchange code for tokens
+    const tokenResponse = await client.authorizationCodeGrant(
+      this.config,
+      callbackUrl,
+      {
+        pkceCodeVerifier: codeVerifier,
+        expectedState: state,
+      }
+    );
+    
+    // Convert and store token
+    this.token = this.convertTokenResponse(tokenResponse);
+    await this.opts.store!.save(this.token);
+    
+    return this.token;
+  }
+  
+  /**
    * Get Ky instance with automatic token injection
    */
   async ky(): Promise<KyInstance> {
@@ -251,19 +336,26 @@ export class McpOAuth {
    */
   async getAccessToken(): Promise<string> {
     if (!this.token) {
-      await this.interactiveLogin();
+      throw new Error('No token available. Please authenticate first.');
     }
     
     // Check if token is expired
     if (this.isTokenExpired()) {
-      if (this.token!.refresh_token) {
+      if (this.token.refresh_token) {
         await this.refreshAccessToken();
       } else {
-        await this.interactiveLogin();
+        throw new Error('Token expired and no refresh token available');
       }
     }
     
-    return this.token!.access_token;
+    return this.token.access_token;
+  }
+  
+  /**
+   * Check if we have a valid token
+   */
+  hasValidToken(): boolean {
+    return !!this.token && !this.isTokenExpired();
   }
   
   /**
@@ -298,127 +390,6 @@ export class McpOAuth {
   }
   
   /**
-   * Interactive browser-based login flow with PKCE
-   */
-  private async interactiveLogin(): Promise<void> {
-    if (!this.config) {
-      throw new Error('OAuth not initialized');
-    }
-    
-    const { redirectUri, store } = this.opts;
-    
-    // Generate PKCE parameters
-    const codeVerifier = client.randomPKCECodeVerifier();
-    const codeChallenge = await client.calculatePKCECodeChallenge(codeVerifier);
-    const state = client.randomState();
-    
-    const authParams: Record<string, string> = {
-      redirect_uri: redirectUri!,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
-      state,
-      response_type: 'code',
-    };
-    
-    // Build authorization URL
-    const authUrl = client.buildAuthorizationUrl(this.config, authParams);
-    
-    // Open browser for authorization
-    console.log('Opening browser for authentication...');
-    await open(authUrl.href);
-    
-    // Start local server to receive callback
-    const code = await this.waitForCallback(redirectUri!, state);
-    
-    // Exchange authorization code for tokens
-    const callbackUrl = new URL(redirectUri!);
-    callbackUrl.searchParams.set('code', code);
-    callbackUrl.searchParams.set('state', state);
-    
-    const tokenResponse = await client.authorizationCodeGrant(
-      this.config,
-      callbackUrl,
-      {
-        pkceCodeVerifier: codeVerifier,
-        expectedState: state,
-      }
-    );
-    
-    // Convert and store token
-    this.token = this.convertTokenResponse(tokenResponse);
-    await store!.save(this.token);
-  }
-  
-  /**
-   * Wait for OAuth callback on local server
-   */
-  private async waitForCallback(redirectUri: string, expectedState: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const url = new URL(redirectUri);
-      const server = http.createServer((req, res) => {
-        const callbackUrl = new URL(req.url!, redirectUri);
-        
-        // Validate state parameter
-        const state = callbackUrl.searchParams.get('state');
-        if (state !== expectedState) {
-          res.writeHead(400);
-          res.end('Invalid state parameter');
-          server.close();
-          reject(new Error('OAuth state mismatch'));
-          return;
-        }
-        
-        // Check for OAuth error
-        const error = callbackUrl.searchParams.get('error');
-        if (error) {
-          const errorDesc = callbackUrl.searchParams.get('error_description') || error;
-          res.writeHead(400);
-          res.end(`Authentication failed: ${errorDesc}`);
-          server.close();
-          reject(new Error(`OAuth error: ${errorDesc}`));
-          return;
-        }
-        
-        // Get authorization code
-        const code = callbackUrl.searchParams.get('code');
-        if (!code) {
-          res.writeHead(400);
-          res.end('Missing authorization code');
-          server.close();
-          reject(new Error('Missing authorization code'));
-          return;
-        }
-        
-        // Success response
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`
-          <html>
-            <body>
-              <h1>Authentication successful!</h1>
-              <p>You can close this window and return to your terminal.</p>
-              <script>window.close();</script>
-            </body>
-          </html>
-        `);
-        
-        server.close();
-        resolve(code);
-      });
-      
-      const port = parseInt(url.port, 10);
-      server.listen(port, 'localhost', () => {
-        console.log(`Listening for OAuth callback on http://localhost:${port}`);
-      });
-      
-      // Timeout after 5 minutes
-      setTimeout(() => {
-        server.close();
-        reject(new Error('OAuth callback timeout'));
-      }, 5 * 60 * 1000);
-    });
-  }
-  
-  /**
    * Convert token response to stored token format
    */
   private convertTokenResponse(response: client.TokenEndpointResponse): StoredToken {
@@ -434,5 +405,14 @@ export class McpOAuth {
     }
     
     return token;
+  }
+  
+  /**
+   * Clear stored tokens
+   */
+  async clearTokens(): Promise<void> {
+    this.token = undefined;
+    // Optionally clear from storage
+    // await this.opts.store?.clear();
   }
 }
