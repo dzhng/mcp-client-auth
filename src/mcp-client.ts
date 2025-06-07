@@ -153,8 +153,7 @@ export class McpClient {
     }
 
     // Create transport with auth headers if needed
-    const transport = await this.createTransport(baseUrl, requestInit);
-    await client.connect(transport);
+    await this.createTransport(client, baseUrl, requestInit);
     this.client = client;
     return client;
   }
@@ -187,6 +186,7 @@ export class McpClient {
    * Create transport with optional request init for auth headers
    */
   private async createTransport(
+    client: MCP,
     baseUrl: URL,
     requestInit?: RequestInit,
   ): Promise<StreamableHTTPClientTransport | SSEClientTransport> {
@@ -195,11 +195,14 @@ export class McpClient {
       const transport = new StreamableHTTPClientTransport(baseUrl, {
         requestInit,
       });
+      await client.connect(transport);
       return transport;
     } catch (err) {
       // Fallback to SSE transport
       console.warn('StreamableHTTP transport failed, falling back to SSE');
-      return new SSEClientTransport(baseUrl, { requestInit });
+      const transport = new SSEClientTransport(baseUrl, { requestInit });
+      await client.connect(transport);
+      return transport;
     }
   }
 }
