@@ -48,7 +48,6 @@ export class JsonTokenStore implements TokenStore {
 export interface McpOAuthOpts {
   issuerUrl?: string;
   redirectUri?: string;
-  scopes?: string[];
   clientId?: string;
   clientSecret?: string;
   store?: TokenStore;
@@ -66,12 +65,6 @@ export class McpOAuth {
     const {
       issuerUrl = 'https://mcp.atlassian.com/.well-known/oauth-authorization-server',
       redirectUri = 'http://localhost:3334/callback',
-      scopes = [
-        'read:jira-work',
-        'write:jira-work',
-        'read:confluence-content',
-        'offline_access',
-      ],
       clientId,
       clientSecret,
       store = new JsonTokenStore(),
@@ -88,7 +81,6 @@ export class McpOAuth {
     this.token = await store.load();
     this.opts.store = store;
     this.opts.redirectUri = redirectUri;
-    this.opts.scopes = scopes;
   }
 
   /** Return a Ky instance that pre-signs every request. */
@@ -137,7 +129,7 @@ export class McpOAuth {
 
   // --------------------------- interactive browser login ----------------------
   private async interactiveLogin() {
-    const { redirectUri, scopes, store } = this.opts;
+    const { redirectUri, store } = this.opts;
 
     // Generate PKCE parameters
     const codeVerifier = client.randomPKCECodeVerifier();
@@ -146,7 +138,6 @@ export class McpOAuth {
 
     const parameters: Record<string, string> = {
       redirect_uri: redirectUri!,
-      scope: scopes!.join(' '),
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
       state,
