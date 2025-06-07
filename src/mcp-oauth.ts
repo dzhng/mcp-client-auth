@@ -7,26 +7,6 @@
  * - Authorization URL generation with PKCE
  * - Token exchange and refresh
  * - Bearer token management
- *
- * Usage:
- * ```typescript
- * // 1. Create OAuth instance
- * const oauth = new McpOAuth({ serverUrl: 'https://mcp.example.com' });
- *
- * // 2. Initialize (discovers metadata, registers client if needed)
- * await oauth.init();
- *
- * // 3. Generate authorization URL
- * const authRequest = await oauth.createAuthorizationRequest();
- * // Direct user to authRequest.url
- *
- * // 4. Exchange code for token (after user authorizes)
- * const token = await oauth.exchangeCodeForToken(code, state, authRequest.codeVerifier);
- *
- * // 5. Use token with Ky for authenticated requests
- * const ky = await oauth.ky();
- * const data = await ky.get('https://mcp.example.com/data').json();
- * ```
  */
 
 import * as fs from 'node:fs/promises';
