@@ -10,7 +10,10 @@ import open from 'open';
 import { McpClient } from './src/mcp-client';
 import { AuthorizationRequest } from './src/mcp-oauth';
 
+// URL with oauth
 const REMOTE_MCP_URL = 'https://mcp.linear.app/sse';
+// URL without oauth
+//const REMOTE_MCP_URL = 'https://mcp.deepwiki.com/mcp';
 
 /**
  * Handle OAuth authentication flow
