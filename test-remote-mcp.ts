@@ -7,30 +7,25 @@
 import * as http from 'node:http';
 import open from 'open';
 
-import { McpClient } from './src/mcp-client.js';
+import { McpClient } from './src/mcp-client';
+import { AuthorizationRequest } from './src/mcp-oauth';
 
 const REMOTE_MCP_URL = 'https://mcp.linear.app/sse';
 
 /**
  * Handle OAuth authentication flow
  */
-async function handleOAuthFlow(mcpClient: McpClient): Promise<void> {
+async function handleOAuthFlow(
+  mcpClient: McpClient,
+  authRequest: AuthorizationRequest,
+): Promise<void> {
   const oauth = await mcpClient.getOAuth();
   if (!oauth) {
-    console.log('✅ No authentication required');
-    return;
+    throw new Error('OAuth instance not available');
   }
 
   console.log('🔐 Authentication required. Starting OAuth flow...');
 
-  // Check if we already have a valid token
-  if (oauth.hasValidToken()) {
-    console.log('✅ Using existing valid token');
-    return;
-  }
-
-  // Create authorization request
-  const authRequest = await oauth.createAuthorizationRequest();
   console.log(`🌐 Opening browser for authentication...`);
   console.log(`   If browser doesn't open, visit: ${authRequest.url}`);
 
@@ -155,14 +150,21 @@ async function testRemoteMcp() {
 
   try {
     // Check if authentication is required
-    const authRequired = await mcpClient.isAuthRequired();
-    if (authRequired) {
-      await handleOAuthFlow(mcpClient);
+    const authStatus = await mcpClient.isAuthRequired();
+
+    if (!authStatus.isAuthenticated) {
+      // This can only happen when isRequired is true and isAuthenticated is false
+      await handleOAuthFlow(mcpClient, authStatus.authorizationRequest);
+    } else if (!authStatus.isRequired) {
+      console.log('✅ No authentication required');
+    } else {
+      console.log('✅ Using existing valid token');
     }
 
     // Test connection
     console.log('\n📋 Connecting to server...');
-    const server = await mcpClient.getServer();
+    // Usually this doesn't need to be called (mcpClient will automatically call it), but it's here just so we can log that it successfully connected
+    await mcpClient.getServer();
     console.log('✅ Successfully connected to server');
 
     // List available tools

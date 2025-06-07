@@ -11,7 +11,7 @@ import { Client as MCP } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { McpOAuth } from './mcp-oauth';
+import { AuthorizationRequest, McpOAuth } from './mcp-oauth';
 
 export interface McpTool {
   name: string;
@@ -28,6 +28,15 @@ export interface McpClientOptions {
   oauthRedirectUri?: string; // OAuth redirect URI
   protocolVersion?: string; // MCP protocol version
 }
+
+export type AuthStatus =
+  | {
+      isRequired: true;
+      isAuthenticated: false;
+      authorizationRequest: AuthorizationRequest;
+    }
+  | { isRequired: false; isAuthenticated: true }
+  | { isRequired: true; isAuthenticated: true };
 
 export class McpClient {
   private client?: MCP;
@@ -79,13 +88,33 @@ export class McpClient {
   }
 
   /**
-   * Check if authentication is required
+   * Check if authentication is required and return detailed auth status
    */
-  async isAuthRequired(): Promise<boolean> {
+  async isAuthRequired(): Promise<AuthStatus> {
     if (this.requiresAuth === undefined) {
       await this.checkAuthRequired();
     }
-    return this.requiresAuth || false;
+
+    if (!this.requiresAuth) {
+      return { isRequired: false, isAuthenticated: true };
+    }
+
+    // Auth is required
+    if (this.oauth && this.oauth.hasValidToken()) {
+      return { isRequired: true, isAuthenticated: true };
+    }
+
+    // Auth required but no valid token - need to generate auth request
+    if (!this.oauth) {
+      throw new Error('OAuth instance not initialized');
+    }
+
+    const authorizationRequest = await this.oauth.createAuthorizationRequest();
+    return {
+      isRequired: true,
+      isAuthenticated: false,
+      authorizationRequest,
+    };
   }
 
   // -------------------------- internal connection logic ----------------------
