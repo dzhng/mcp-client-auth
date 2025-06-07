@@ -1,12 +1,32 @@
 /**
  * OAuth2 library for MCP (Model Context Protocol) servers
- * 
+ *
  * Provides OAuth2 functionality without handling UI concerns:
  * - Server metadata discovery (RFC8414)
  * - Dynamic client registration (RFC7591)
  * - Authorization URL generation with PKCE
  * - Token exchange and refresh
  * - Bearer token management
+ *
+ * Usage:
+ * ```typescript
+ * // 1. Create OAuth instance
+ * const oauth = new McpOAuth({ serverUrl: 'https://mcp.example.com' });
+ *
+ * // 2. Initialize (discovers metadata, registers client if needed)
+ * await oauth.init();
+ *
+ * // 3. Generate authorization URL
+ * const authRequest = await oauth.createAuthorizationRequest();
+ * // Direct user to authRequest.url
+ *
+ * // 4. Exchange code for token (after user authorizes)
+ * const token = await oauth.exchangeCodeForToken(code, state, authRequest.codeVerifier);
+ *
+ * // 5. Use token with Ky for authenticated requests
+ * const ky = await oauth.ky();
+ * const data = await ky.get('https://mcp.example.com/data').json();
+ * ```
  */
 
 import * as fs from 'node:fs/promises';
@@ -14,21 +34,39 @@ import kyFactory, { KyInstance, Options as KyOptions } from 'ky';
 import * as client from 'openid-client';
 
 // --------------------------- Token Store Interface ----------------------------
+
+/**
+ * Interface for persisting OAuth tokens between sessions
+ */
 export interface TokenStore {
+  /** Load stored token from persistent storage */
   load(): Promise<StoredToken | undefined>;
+  /** Save token to persistent storage */
   save(token: StoredToken): Promise<void>;
+  /** Optional: Clear stored token */
+  clear?(): Promise<void>;
 }
 
+/**
+ * OAuth token structure
+ */
 export interface StoredToken {
+  /** OAuth access token */
   access_token: string;
+  /** OAuth refresh token (if available) */
   refresh_token?: string;
-  expires_at?: number; // Unix timestamp in seconds
+  /** Token expiration time (Unix timestamp in seconds) */
+  expires_at?: number;
+  /** Token type (usually "Bearer") */
   token_type?: string;
 }
 
+/**
+ * Simple file-based token storage implementation
+ */
 export class JsonTokenStore implements TokenStore {
   constructor(private path = '.mcp-token.json') {}
-  
+
   async load(): Promise<StoredToken | undefined> {
     try {
       return JSON.parse(await fs.readFile(this.path, 'utf8'));
@@ -36,21 +74,36 @@ export class JsonTokenStore implements TokenStore {
       return undefined;
     }
   }
-  
+
   async save(token: StoredToken): Promise<void> {
     await fs.writeFile(this.path, JSON.stringify(token, null, 2), 'utf8');
+  }
+
+  async clear(): Promise<void> {
+    try {
+      await fs.unlink(this.path);
+    } catch {
+      // Ignore if file doesn't exist
+    }
   }
 }
 
 // --------------------------- OAuth Configuration ------------------------------
 export interface McpOAuthOptions {
-  serverUrl: string; // The MCP server URL
-  clientId?: string; // Optional pre-registered client ID
-  clientSecret?: string; // Optional client secret
-  redirectUri?: string; // OAuth redirect URI
-  store?: TokenStore; // Token storage implementation
-  kyOpts?: KyOptions; // Additional Ky options
-  protocolVersion?: string; // MCP protocol version
+  /** The MCP server URL */
+  serverUrl: string;
+  /** Optional pre-registered client ID */
+  clientId?: string;
+  /** Optional client secret (for confidential clients) */
+  clientSecret?: string;
+  /** OAuth redirect URI (defaults to http://localhost:3334/callback) */
+  redirectUri?: string;
+  /** Token storage implementation (defaults to JsonTokenStore) */
+  store?: TokenStore;
+  /** Additional Ky options for HTTP requests */
+  kyOpts?: KyOptions;
+  /** MCP protocol version (defaults to 2024-11-05) */
+  protocolVersion?: string;
 }
 
 export interface ServerMetadata {
@@ -70,8 +123,11 @@ export interface ClientRegistrationResponse {
 }
 
 export interface AuthorizationRequest {
+  /** The authorization URL to redirect the user to */
   url: string;
+  /** OAuth state parameter for CSRF protection */
   state: string;
+  /** PKCE code verifier to use during token exchange */
   codeVerifier: string;
 }
 
@@ -88,15 +144,16 @@ export class McpOAuth {
   private kyInstance?: KyInstance;
   private metadata?: ServerMetadata;
   private authBaseUrl: string;
-  
+
   constructor(private opts: McpOAuthOptions) {
     // Determine authorization base URL by removing path from server URL
     const url = new URL(opts.serverUrl);
     this.authBaseUrl = `${url.protocol}//${url.host}`;
   }
-  
+
   /**
    * Check if the MCP server requires authentication
+   * @returns true if server returns 401, false otherwise
    */
   async checkAuthRequired(): Promise<boolean> {
     try {
@@ -107,16 +164,17 @@ export class McpOAuth {
           'MCP-Protocol-Version': this.opts.protocolVersion || '2024-11-05',
         },
       });
-      
+
       return response.status === 401;
     } catch (error) {
       // Network error or timeout - assume no auth required
       return false;
     }
   }
-  
+
   /**
-   * Initialize OAuth client
+   * Initialize OAuth client - discovers metadata, performs client registration if needed
+   * Must be called before using other OAuth methods
    */
   async init(): Promise<void> {
     const {
@@ -124,34 +182,34 @@ export class McpOAuth {
       store = new JsonTokenStore(),
       protocolVersion = '2024-11-05',
     } = this.opts;
-    
+
     this.opts.store = store;
     this.opts.redirectUri = redirectUri;
     this.opts.protocolVersion = protocolVersion;
-    
+
     // 1) Try server metadata discovery
     await this.discoverMetadata();
-    
+
     // 2) Perform dynamic client registration if needed
     if (!this.opts.clientId && this.metadata?.registration_endpoint) {
       await this.dynamicClientRegistration();
     }
-    
+
     // 3) Initialize openid-client configuration
     if (!this.opts.clientId) {
       throw new Error(
-        'No client ID available. Server does not support dynamic registration.'
+        'No client ID available. Server does not support dynamic registration.',
       );
     }
-    
+
     // Initialize with discovered or default metadata
     const issuerUrl = this.metadata?.issuer || this.authBaseUrl;
     this.config = await client.discovery(
       new URL(issuerUrl),
       this.opts.clientId,
-      this.opts.clientSecret
+      this.opts.clientSecret,
     );
-    
+
     // Override endpoints if we have custom metadata
     if (this.metadata) {
       // @ts-ignore - accessing private properties for customization
@@ -162,20 +220,20 @@ export class McpOAuth {
         registration_endpoint: this.metadata!.registration_endpoint,
       });
     }
-    
+
     // 4) Load cached token if any
     const storedToken = await store.load();
     if (storedToken) {
       this.token = storedToken;
     }
   }
-  
-  /** 
+
+  /**
    * Discover OAuth server metadata per RFC8414
    */
   private async discoverMetadata(): Promise<void> {
     const metadataUrl = `${this.authBaseUrl}/.well-known/oauth-authorization-server`;
-    
+
     try {
       const response = await kyFactory(metadataUrl, {
         headers: {
@@ -183,7 +241,7 @@ export class McpOAuth {
         },
         timeout: 5000,
       }).json<ServerMetadata>();
-      
+
       this.metadata = response;
     } catch (error) {
       // Fall back to default endpoints if discovery fails
@@ -196,7 +254,7 @@ export class McpOAuth {
       };
     }
   }
-  
+
   /**
    * Perform dynamic client registration per RFC7591
    */
@@ -204,7 +262,7 @@ export class McpOAuth {
     if (!this.metadata?.registration_endpoint) {
       return;
     }
-    
+
     const registrationData = {
       client_name: 'MCP Client',
       redirect_uris: [this.opts.redirectUri!],
@@ -212,7 +270,7 @@ export class McpOAuth {
       response_types: ['code'],
       token_endpoint_auth_method: 'none', // Public client
     };
-    
+
     try {
       const response = await kyFactory
         .post(this.metadata.registration_endpoint, {
@@ -223,31 +281,31 @@ export class McpOAuth {
           },
         })
         .json<ClientRegistrationResponse>();
-      
+
       // Update options with dynamically registered client
       this.opts.clientId = response.client_id;
       this.opts.clientSecret = response.client_secret;
-      
+
       // TODO: Persist client registration for future use
     } catch (error) {
       console.warn('Dynamic client registration failed:', error);
     }
   }
-  
+
   /**
    * Generate authorization URL with PKCE
-   * Returns the URL and state/verifier for later use
+   * @returns Authorization request with URL, state, and code verifier
    */
   async createAuthorizationRequest(): Promise<AuthorizationRequest> {
     if (!this.config) {
       throw new Error('OAuth not initialized');
     }
-    
+
     // Generate PKCE parameters
     const codeVerifier = client.randomPKCECodeVerifier();
     const codeChallenge = await client.calculatePKCECodeChallenge(codeVerifier);
     const state = client.randomState();
-    
+
     const authParams: Record<string, string> = {
       redirect_uri: this.opts.redirectUri!,
       code_challenge: codeChallenge,
@@ -255,34 +313,38 @@ export class McpOAuth {
       state,
       response_type: 'code',
     };
-    
+
     // Build authorization URL
     const authUrl = client.buildAuthorizationUrl(this.config, authParams);
-    
+
     return {
       url: authUrl.href,
       state,
       codeVerifier,
     };
   }
-  
+
   /**
-   * Exchange authorization code for tokens
+   * Exchange authorization code for access and refresh tokens
+   * @param code - Authorization code from OAuth callback
+   * @param state - State parameter from OAuth callback (for CSRF validation)
+   * @param codeVerifier - PKCE code verifier from createAuthorizationRequest
+   * @returns Stored token with access_token, refresh_token, and expiration
    */
   async exchangeCodeForToken(
     code: string,
     state: string,
-    codeVerifier: string
+    codeVerifier: string,
   ): Promise<StoredToken> {
     if (!this.config) {
       throw new Error('OAuth not initialized');
     }
-    
+
     // Create callback URL with code and state
     const callbackUrl = new URL(this.opts.redirectUri!);
     callbackUrl.searchParams.set('code', code);
     callbackUrl.searchParams.set('state', state);
-    
+
     // Exchange code for tokens
     const tokenResponse = await client.authorizationCodeGrant(
       this.config,
@@ -290,18 +352,19 @@ export class McpOAuth {
       {
         pkceCodeVerifier: codeVerifier,
         expectedState: state,
-      }
+      },
     );
-    
+
     // Convert and store token
     this.token = this.convertTokenResponse(tokenResponse);
     await this.opts.store!.save(this.token);
-    
+
     return this.token;
   }
-  
+
   /**
-   * Get Ky instance with automatic token injection
+   * Get Ky HTTP client with automatic Bearer token injection and refresh
+   * @returns Ky instance that automatically adds Authorization header
    */
   async ky(): Promise<KyInstance> {
     if (!this.kyInstance) {
@@ -309,7 +372,7 @@ export class McpOAuth {
         ...this.opts.kyOpts,
         hooks: {
           beforeRequest: [
-            async (request) => {
+            async request => {
               const token = await this.getAccessToken();
               request.headers.set('Authorization', `Bearer ${token}`);
             },
@@ -330,15 +393,17 @@ export class McpOAuth {
     }
     return this.kyInstance;
   }
-  
+
   /**
-   * Get valid access token, refreshing if needed
+   * Get valid access token, automatically refreshing if expired
+   * @returns Current access token
+   * @throws Error if no token available or refresh fails
    */
   async getAccessToken(): Promise<string> {
     if (!this.token) {
       throw new Error('No token available. Please authenticate first.');
     }
-    
+
     // Check if token is expired
     if (this.isTokenExpired()) {
       if (this.token.refresh_token) {
@@ -347,17 +412,18 @@ export class McpOAuth {
         throw new Error('Token expired and no refresh token available');
       }
     }
-    
+
     return this.token.access_token;
   }
-  
+
   /**
-   * Check if we have a valid token
+   * Check if a valid (non-expired) token is available
+   * @returns true if token exists and is not expired
    */
   hasValidToken(): boolean {
     return !!this.token && !this.isTokenExpired();
   }
-  
+
   /**
    * Check if current token is expired
    */
@@ -365,54 +431,74 @@ export class McpOAuth {
     if (!this.token?.expires_at) {
       return false;
     }
-    
+
     // Add 5-minute buffer before expiration
     const now = Math.floor(Date.now() / 1000);
-    return now > (this.token.expires_at - 300);
+    return now > this.token.expires_at - 300;
   }
-  
+
   /**
    * Refresh access token using refresh token
    */
   private async refreshAccessToken(): Promise<void> {
     if (!this.config || !this.token?.refresh_token) {
-      throw new Error('Cannot refresh token: missing configuration or refresh token');
+      throw new Error(
+        'Cannot refresh token: missing configuration or refresh token',
+      );
     }
-    
+
     const tokenResponse = await client.refreshTokenGrant(
       this.config,
-      this.token.refresh_token
+      this.token.refresh_token,
     );
-    
+
     // Convert and store token with proper expiration
     this.token = this.convertTokenResponse(tokenResponse);
     await this.opts.store!.save(this.token);
   }
-  
+
   /**
    * Convert token response to stored token format
    */
-  private convertTokenResponse(response: client.TokenEndpointResponse): StoredToken {
+  private convertTokenResponse(
+    response: client.TokenEndpointResponse,
+  ): StoredToken {
     const token: StoredToken = {
       access_token: response.access_token!,
       refresh_token: response.refresh_token,
       token_type: response.token_type,
     };
-    
+
     // Calculate expiration timestamp
     if (response.expires_in) {
       token.expires_at = Math.floor(Date.now() / 1000) + response.expires_in;
     }
-    
+
     return token;
   }
-  
+
   /**
-   * Clear stored tokens
+   * Clear stored tokens from memory and optionally from storage
+   * @param clearStorage - Whether to also clear from persistent storage
    */
-  async clearTokens(): Promise<void> {
+  async clearTokens(clearStorage = false): Promise<void> {
     this.token = undefined;
-    // Optionally clear from storage
-    // await this.opts.store?.clear();
+    if (clearStorage && this.opts.store?.clear) {
+      await this.opts.store.clear();
+    }
+  }
+
+  /**
+   * Get current token metadata (for debugging/display)
+   * @returns Current token info without sensitive access_token
+   */
+  getTokenInfo(): { expiresAt?: Date; hasRefreshToken: boolean } | null {
+    if (!this.token) return null;
+    return {
+      expiresAt: this.token.expires_at
+        ? new Date(this.token.expires_at * 1000)
+        : undefined,
+      hasRefreshToken: !!this.token.refresh_token,
+    };
   }
 }
