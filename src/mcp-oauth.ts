@@ -360,21 +360,36 @@ export class McpOAuth {
     callbackUrl.searchParams.set('state', state);
 
     // Exchange code for tokens
-    const tokenResponse = await client.authorizationCodeGrant(
-      this.config,
-      callbackUrl,
-      {
-        pkceCodeVerifier: codeVerifier,
-        expectedState: state,
-      },
-    );
+    try {
+      const tokenResponse = await client.authorizationCodeGrant(
+        this.config,
+        callbackUrl,
+        {
+          pkceCodeVerifier: codeVerifier,
+          expectedState: state,
+        },
+      );
 
-    // Convert and store token
-    const token = this.convertTokenResponse(tokenResponse);
-    this.oauthData.token = token;
-    await this.opts.store!.save(this.oauthData);
+      // Convert and store token
+      const token = this.convertTokenResponse(tokenResponse);
+      this.oauthData.token = token;
+      await this.opts.store!.save(this.oauthData);
 
-    return token;
+      return token;
+    } catch (error: any) {
+      // Log more details about the error
+      console.error(
+        'Token exchange error details:',
+        error instanceof client.ResponseBodyError
+          ? {
+              error,
+              cause: error.cause,
+              response: error.response,
+            }
+          : error,
+      );
+      throw error;
+    }
   }
 
   /**

@@ -42,6 +42,7 @@ async function handleOAuthFlow(mcpClient: McpClient): Promise<void> {
 
   // Exchange code for token
   console.log('🔄 Exchanging authorization code for token...');
+  console.log(`📝 Received authorization code: ${code}`);
   await oauth.exchangeCodeForToken(
     code,
     authRequest.state,
