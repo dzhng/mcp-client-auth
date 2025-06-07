@@ -22,11 +22,6 @@ async function handleOAuthFlow(
   mcpClient: McpClient,
   authRequest: AuthorizationRequest,
 ): Promise<void> {
-  const oauth = await mcpClient.getOAuth();
-  if (!oauth) {
-    throw new Error('OAuth instance not available');
-  }
-
   console.log('🔐 Authentication required. Starting OAuth flow...');
 
   console.log(`🌐 Opening browser for authentication...`);
@@ -41,11 +36,7 @@ async function handleOAuthFlow(
   // Exchange code for token
   console.log('🔄 Exchanging authorization code for token...');
   console.log(`📝 Received authorization code: ${code}`);
-  await oauth.exchangeCodeForToken(
-    code,
-    authRequest.state,
-    authRequest.codeVerifier,
-  );
+  await mcpClient.handleAuthByCode(code, authRequest);
   console.log('✅ Authentication successful!');
 }
 

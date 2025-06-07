@@ -78,7 +78,7 @@ export class McpClient {
   }
 
   /**
-   * Get OAuth instance if authentication is required
+   * Get OAuth instance to handle authentication - for normal flow this should not be needed
    */
   async getOAuth(): Promise<McpOAuth | undefined> {
     if (this.requiresAuth === undefined) {
@@ -115,6 +115,17 @@ export class McpClient {
       isAuthenticated: false,
       authorizationRequest,
     };
+  }
+
+  async handleAuthByCode(code: string, authRequest: AuthorizationRequest) {
+    if (this.requiresAuth === undefined) {
+      await this.checkAuthRequired();
+    }
+    await this.oauth!.exchangeCodeForToken(
+      code,
+      authRequest.state,
+      authRequest.codeVerifier,
+    );
   }
 
   // -------------------------- internal connection logic ----------------------
