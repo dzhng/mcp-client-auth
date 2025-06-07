@@ -32,6 +32,7 @@
 import * as fs from 'node:fs/promises';
 import kyFactory, { KyInstance, Options as KyOptions } from 'ky';
 import * as client from 'openid-client';
+import { Configuration } from 'openid-client';
 
 // --------------------------- Token Store Interface ----------------------------
 
@@ -217,7 +218,7 @@ export class McpOAuth {
     await this.discoverMetadata();
 
     // 3) Perform dynamic client registration if needed
-    if (!this.opts.clientId && this.metadata?.registration_endpoint) {
+    if (!this.opts.clientId && this.metadata!.registration_endpoint) {
       await this.dynamicClientRegistration();
     }
 
@@ -228,24 +229,11 @@ export class McpOAuth {
       );
     }
 
-    // Initialize with discovered or default metadata
-    const issuerUrl = this.metadata?.issuer || this.authBaseUrl;
-    this.config = await client.discovery(
-      new URL(issuerUrl),
+    this.config = new Configuration(
+      this.metadata as client.ServerMetadata,
       this.opts.clientId,
       this.opts.clientSecret,
     );
-
-    // Override endpoints if we have custom metadata
-    if (this.metadata) {
-      // @ts-ignore - accessing private properties for customization
-      this.config.serverMetadata = () => ({
-        issuer: this.metadata!.issuer,
-        authorization_endpoint: this.metadata!.authorization_endpoint,
-        token_endpoint: this.metadata!.token_endpoint,
-        registration_endpoint: this.metadata!.registration_endpoint,
-      });
-    }
   }
 
   /**
