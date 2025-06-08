@@ -2,6 +2,7 @@ node_modules
 dist
 build
 coverage
+*.md
 *.min.js
 *.bundle.js
 package-lock.json
