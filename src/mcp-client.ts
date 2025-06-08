@@ -11,7 +11,7 @@ import { Client as MCP } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { AuthorizationRequest, McpOAuth } from './mcp-oauth';
+import { AuthorizationRequest, McpOAuth, OAuthStore } from './mcp-oauth';
 
 export interface McpTool {
   name: string;
@@ -23,6 +23,8 @@ export interface McpTool {
 export interface McpClientOptions {
   url: string;
   oauth?: McpOAuth; // Optional pre-configured OAuth instance
+  /** OAuth data storage implementation (defaults to JsonOAuthStore) */
+  store?: OAuthStore;
   clientId?: string; // Optional pre-registered OAuth client ID
   clientSecret?: string; // Optional OAuth client secret
   oauthRedirectUri?: string; // OAuth redirect URI
@@ -137,7 +139,7 @@ export class McpClient {
     }
 
     const baseUrl = new URL(this.url);
-    const client = new MCP({ name: 'mcp-kit-client', version: '1.0.0' });
+    const client = new MCP({ name: 'mcp-client-auth', version: '1.0.0' });
 
     // Check if auth is required and initialize OAuth if needed
     if (this.requiresAuth === undefined) {
@@ -177,6 +179,7 @@ export class McpClient {
     if (!this.oauth) {
       this.oauth = new McpOAuth({
         serverUrl: this.url,
+        store: this.opts.store,
         clientId: this.opts.clientId,
         clientSecret: this.opts.clientSecret,
         redirectUri: this.opts.oauthRedirectUri,
