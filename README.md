@@ -183,6 +183,8 @@ class McpOAuth {
 
   // Reset tokens
   reset(clearStorage?: boolean): Promise<void>;
+  // Revoke tokens
+  revokeToken(): Promise<void>;
 }
 ```
 

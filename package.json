@@ -1,6 +1,6 @@
 {
   "name": "mcp-client-auth",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A set of useful utils for building MCP clients, starting with reference OAuth implementations.",
   "type": "module",
   "main": "./dist/index.js",

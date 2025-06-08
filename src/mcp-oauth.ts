@@ -501,6 +501,31 @@ export class McpOAuth {
     }
   }
 
+  async revokeToken(): Promise<void> {
+    if (!this.config) {
+      throw new Error(
+        'Cannot revoke token: missing configuration or refresh token',
+      );
+    }
+
+    if (this.oauthData.token?.refresh_token) {
+      await client.tokenRevocation(
+        this.config,
+        this.oauthData.token.refresh_token,
+      );
+    }
+
+    if (this.oauthData.token?.access_token) {
+      await client.tokenRevocation(
+        this.config,
+        this.oauthData.token.access_token,
+      );
+    }
+
+    this.oauthData.token = undefined;
+    await this.opts.store!.save(this.oauthData);
+  }
+
   /**
    * Get current token metadata (for debugging/display)
    * @returns Current token info without sensitive access_token
