@@ -144,11 +144,12 @@ async function testRemoteMcp() {
 
   try {
     // Check if authentication is required
-    const authStatus = await mcpClient.isAuthRequired();
+    const authStatus = await mcpClient.getAuthStatus();
 
     if (!authStatus.isAuthenticated) {
+      const authorizationRequest = await mcpClient.getAuthorizationRequest();
       // This can only happen when isRequired is true and isAuthenticated is false
-      await handleOAuthFlow(mcpClient, authStatus.authorizationRequest);
+      await handleOAuthFlow(mcpClient, authorizationRequest);
     } else if (!authStatus.isRequired) {
       console.log('✅ No authentication required');
     } else {
