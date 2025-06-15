@@ -215,6 +215,11 @@ async function testRemoteMcp() {
     // Clean up connection
     await mcpClient.disconnect();
     console.log('\n🔌 Disconnected from server');
+
+    // Revoke token
+    const oauth = await mcpClient.getOAuth();
+    await oauth?.revokeToken();
+    console.log('\n🔌 Token revoked');
   }
 }
 
