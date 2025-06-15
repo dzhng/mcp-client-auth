@@ -509,17 +509,15 @@ export class McpOAuth {
     }
 
     if (this.oauthData.token?.refresh_token) {
-      await client.tokenRevocation(
-        this.config,
-        this.oauthData.token.refresh_token,
-      );
+      await client
+        .tokenRevocation(this.config, this.oauthData.token.refresh_token)
+        .catch(e => console.error('Error revoking mcp refresh token', e));
     }
 
     if (this.oauthData.token?.access_token) {
-      await client.tokenRevocation(
-        this.config,
-        this.oauthData.token.access_token,
-      );
+      await client
+        .tokenRevocation(this.config, this.oauthData.token.access_token)
+        .catch(e => console.error('Error revoking mcp access token', e));
     }
 
     this.oauthData.token = undefined;
