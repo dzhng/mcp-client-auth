@@ -35,7 +35,6 @@ export type AuthStatus =
   | {
       isRequired: true;
       isAuthenticated: false;
-      authorizationRequest: AuthorizationRequest;
     }
   | { isRequired: false; isAuthenticated: true }
   | { isRequired: true; isAuthenticated: true };
@@ -92,7 +91,7 @@ export class McpClient {
   /**
    * Check if authentication is required and return detailed auth status
    */
-  async isAuthRequired(): Promise<AuthStatus> {
+  async getAuthStatus(): Promise<AuthStatus> {
     if (this.requiresAuth === undefined) {
       await this.checkAuthRequired();
     }
@@ -102,21 +101,19 @@ export class McpClient {
     }
 
     // Auth is required
-    if (this.oauth && this.oauth.hasValidToken()) {
+    if (this.oauth!.hasValidToken()) {
       return { isRequired: true, isAuthenticated: true };
     }
 
-    // Auth required but no valid token - need to generate auth request
-    if (!this.oauth) {
-      throw new Error('OAuth instance not initialized');
+    return { isRequired: true, isAuthenticated: false };
+  }
+
+  async getAuthorizationRequest(): Promise<AuthorizationRequest> {
+    if (this.requiresAuth === undefined) {
+      await this.checkAuthRequired();
     }
 
-    const authorizationRequest = await this.oauth.createAuthorizationRequest();
-    return {
-      isRequired: true,
-      isAuthenticated: false,
-      authorizationRequest,
-    };
+    return await this.oauth!.createAuthorizationRequest();
   }
 
   async handleAuthByCode(code: string, authRequest: AuthorizationRequest) {
